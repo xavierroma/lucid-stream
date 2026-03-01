@@ -1,0 +1,15 @@
+[project]
+name = "lucid-stream"
+version = "0.1.0"
+description = "Stream Reactor remote tracks to YouTube Live via ffmpeg."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "python-dotenv>=1.0.0",
+    "reactor-sdk>=0.2.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
