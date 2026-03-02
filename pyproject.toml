@@ -1,10 +1,12 @@
 [project]
 name = "lucid-stream"
 version = "0.1.0"
-description = "Stream Reactor remote tracks to YouTube Live via ffmpeg."
+description = "Stream Reactor remote tracks to YouTube Live via LiveKit egress."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "livekit>=1.0.17",
+    "livekit-api>=1.1.0",
     "python-dotenv>=1.0.0",
     "reactor-sdk>=0.2.2",
 ]
