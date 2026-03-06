@@ -1,16 +1,22 @@
 # lucid-stream
 
-Stream a Reactor remote video track to YouTube Live using LiveKit track publish + LiveKit egress.
+Stream Reactor remote video output to YouTube Live using `reactor-egress` (Reactor source + RTMP sink).
 
 ## Requirements
 
 - Python 3.11+
 - `uv`
+- `ffmpeg` in `PATH`
 - Reactor API key
-- LiveKit project/server credentials
 - YouTube Live RTMP URL (or stream key)
 
 ## Install
+
+This project is configured to use the local editable package at:
+
+`/Users/xavierroma/projects/reactor-egress`
+
+Sync dependencies:
 
 ```bash
 uv sync
@@ -30,8 +36,6 @@ Preferred (full YouTube RTMP URL):
 uv run python main.py
 ```
 
-The script automatically loads `.env` (if present).
-
 If you want this script to send `schedule_prompt` + `start` to Reactor before streaming:
 
 ```bash
@@ -42,9 +46,6 @@ Alternative YouTube target (stream key + optional base URL):
 
 ```bash
 REACTOR_API_KEY="rk_..." \
-LIVEKIT_URL="wss://your-project.livekit.cloud" \
-LIVEKIT_API_KEY="..." \
-LIVEKIT_API_SECRET="..." \
 YT_STREAM_KEY="xxxx-xxxx-xxxx-xxxx-xxxx" \
 uv run python main.py
 ```
@@ -54,20 +55,15 @@ uv run python main.py
 Required:
 
 - `REACTOR_API_KEY`
-- `LIVEKIT_URL`
-- `LIVEKIT_API_KEY`
-- `LIVEKIT_API_SECRET`
 - one of:
   - `YOUTUBE_RTMP_URL` (preferred full ingest URL), or
   - `YT_STREAM_KEY` (+ optional `YT_RTMP_BASE`)
 
 Optional:
 
-- `LIVEKIT_ROOM_NAME` (default: `reactor-youtube`)
-- `LIVEKIT_PARTICIPANT_IDENTITY` (default: `reactor-bridge`)
-- `LIVEKIT_API_URL` (defaults from `LIVEKIT_URL`, mapping `wss->https`, `ws->http`)
 - `REACTOR_START_PROMPT` (used if `--start-prompt` is not provided)
 - `YOUTUBE_API_KEY` + `YOUTUBE_VIDEO_ID` (enable chat `/prompt` relay)
+- `REACTOR_MESSAGE_DIAGNOSTICS` (`1`/`true` to log summarized Reactor state/event messages)
 
 ## CLI Options
 
@@ -78,13 +74,11 @@ uv run python main.py \
   --fps 30 \
   --video-bitrate-kbps 2500 \
   --audio-bitrate-kbps 128 \
-  --livekit-room reactor-youtube \
-  --livekit-identity reactor-bridge \
   --youtube-api-key "AIza..." \
   --youtube-video-id "abc123xyz00" \
   --max-retries 5 \
   --track-wait-timeout 30 \
-  --frame-timeout 10
+  --reactor-message-diagnostics
 ```
 
 ## YouTube Chat Prompt Relay
@@ -106,20 +100,21 @@ Behavior:
 
 - Retries up to `--max-retries` attempts (default `5`).
 - Backoff schedule: `2s`, `4s`, `8s`, `16s`, `32s` for attempts 1-5.
-- Frame timeouts, dimension changes, and LiveKit/egress failures are retried.
-
-## Notes on Audio
-
-Reactor currently exposes video remote track output in this flow. The script publishes a
-generated silent stereo audio track into LiveKit so YouTube ingest stays stable and avoids
-no-audio ingest warnings.
+- Reactor readiness, source, and RTMP sink failures are retried.
 
 ## Troubleshooting
 
 - `Missing REACTOR_API_KEY`: export `REACTOR_API_KEY`.
-- `Missing LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET`: set LiveKit credentials.
 - `Missing YouTube target`: set either `YOUTUBE_RTMP_URL` or `YT_STREAM_KEY`.
 - `YOUTUBE_RTMP_URL is missing the stream key`: include `/live2/<stream_key>` at the end.
+- `ffmpeg not found in PATH`: install ffmpeg and ensure the binary is discoverable.
 - `Timed out ... waiting for Reactor remote track`: Reactor session is connected but no video track yet.
-- Egress start failures: verify LiveKit server egress availability and YouTube RTMP URL/key.
-- Retries exhausted: check Reactor connectivity, LiveKit credentials, and YouTube ingest key/URL.
+- `Failed opening RTMP sink`: verify YouTube RTMP URL/key and outbound network connectivity.
+
+### Reactor-only Probe
+
+Use this to isolate Reactor output from the egress path:
+
+```bash
+uv run python scripts/reactor_probe.py
+```

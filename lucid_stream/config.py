@@ -17,23 +17,17 @@ class StreamConfig:
     audio_bitrate_kbps: int
     max_retries: int
     track_wait_timeout: float
-    frame_timeout: float
+    reactor_message_diagnostics: bool
     reactor_api_key: str
     youtube_rtmp_url: str
     start_prompt: str | None
     youtube_api_key: str | None
     youtube_video_id: str | None
-    livekit_url: str
-    livekit_api_url: str
-    livekit_api_key: str
-    livekit_api_secret: str
-    livekit_room_name: str
-    livekit_identity: str
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Stream a Reactor remote video track to YouTube Live via LiveKit egress.",
+        description="Stream a Reactor remote video track to YouTube Live via reactor-egress.",
     )
     parser.add_argument("--model-name", default="livecore")
     parser.add_argument("--fps", type=int, default=30)
@@ -41,7 +35,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--audio-bitrate-kbps", type=int, default=128)
     parser.add_argument("--max-retries", type=int, default=5)
     parser.add_argument("--track-wait-timeout", type=float, default=30.0)
-    parser.add_argument("--frame-timeout", type=float, default=10.0)
+    parser.add_argument(
+        "--reactor-message-diagnostics",
+        action="store_true",
+        help="Log summarized Reactor state/event messages as they arrive.",
+    )
     parser.add_argument(
         "--start-prompt",
         default=None,
@@ -56,24 +54,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--youtube-video-id",
         default=None,
         help="YouTube live video ID (or set YOUTUBE_VIDEO_ID) for /prompt chat relay.",
-    )
-    parser.add_argument(
-        "--livekit-room",
-        default=None,
-        help="LiveKit room name (or set LIVEKIT_ROOM_NAME).",
-    )
-    parser.add_argument(
-        "--livekit-identity",
-        default=None,
-        help="LiveKit participant identity (or set LIVEKIT_PARTICIPANT_IDENTITY).",
-    )
-    parser.add_argument(
-        "--livekit-api-url",
-        default=None,
-        help=(
-            "LiveKit server API base URL (or set LIVEKIT_API_URL). "
-            "Defaults to LIVEKIT_URL with wss->https and ws->http."
-        ),
     )
     return parser.parse_args(argv)
 
@@ -114,41 +94,15 @@ def resolve_youtube_url(env: Mapping[str, str]) -> str:
     return resolved_url
 
 
-def derive_livekit_api_url(livekit_url: str) -> str:
-    parsed = urlparse(livekit_url)
-    if not parsed.netloc:
-        raise ConfigError("LIVEKIT_URL must include scheme and host.")
-
-    if parsed.scheme == "wss":
-        scheme = "https"
-    elif parsed.scheme == "ws":
-        scheme = "http"
-    elif parsed.scheme in {"https", "http"}:
-        scheme = parsed.scheme
-    else:
-        raise ConfigError(
-            "LIVEKIT_URL must use ws, wss, http, or https scheme.",
-        )
-
-    return f"{scheme}://{parsed.netloc}"
+def parse_env_flag(env: Mapping[str, str], key: str) -> bool:
+    raw = env.get(key, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def build_config(args: argparse.Namespace, env: Mapping[str, str]) -> StreamConfig:
     reactor_api_key = env.get("REACTOR_API_KEY", "").strip()
     if not reactor_api_key:
         raise ConfigError("Missing REACTOR_API_KEY environment variable.")
-
-    livekit_url = env.get("LIVEKIT_URL", "").strip()
-    if not livekit_url:
-        raise ConfigError("Missing LIVEKIT_URL environment variable.")
-
-    livekit_api_key = env.get("LIVEKIT_API_KEY", "").strip()
-    if not livekit_api_key:
-        raise ConfigError("Missing LIVEKIT_API_KEY environment variable.")
-
-    livekit_api_secret = env.get("LIVEKIT_API_SECRET", "").strip()
-    if not livekit_api_secret:
-        raise ConfigError("Missing LIVEKIT_API_SECRET environment variable.")
 
     if args.fps <= 0:
         raise ConfigError("--fps must be a positive integer.")
@@ -160,8 +114,6 @@ def build_config(args: argparse.Namespace, env: Mapping[str, str]) -> StreamConf
         raise ConfigError("--max-retries must be a positive integer.")
     if args.track_wait_timeout <= 0:
         raise ConfigError("--track-wait-timeout must be positive.")
-    if args.frame_timeout <= 0:
-        raise ConfigError("--frame-timeout must be positive.")
 
     start_prompt = args.start_prompt
     if start_prompt is None:
@@ -179,25 +131,10 @@ def build_config(args: argparse.Namespace, env: Mapping[str, str]) -> StreamConf
         youtube_video_id = env.get("YOUTUBE_VIDEO_ID")
     youtube_video_id = youtube_video_id.strip() if youtube_video_id else None
 
-    livekit_room_name = args.livekit_room or env.get("LIVEKIT_ROOM_NAME") or "reactor-youtube"
-    livekit_room_name = livekit_room_name.strip()
-    if not livekit_room_name:
-        raise ConfigError("LiveKit room name cannot be empty.")
-
-    livekit_identity = (
-        args.livekit_identity
-        or env.get("LIVEKIT_PARTICIPANT_IDENTITY")
-        or "reactor-bridge"
+    reactor_message_diagnostics = args.reactor_message_diagnostics or parse_env_flag(
+        env,
+        "REACTOR_MESSAGE_DIAGNOSTICS",
     )
-    livekit_identity = livekit_identity.strip()
-    if not livekit_identity:
-        raise ConfigError("LiveKit participant identity cannot be empty.")
-
-    livekit_api_url = args.livekit_api_url or env.get("LIVEKIT_API_URL")
-    if livekit_api_url:
-        livekit_api_url = livekit_api_url.strip()
-    if not livekit_api_url:
-        livekit_api_url = derive_livekit_api_url(livekit_url)
 
     return StreamConfig(
         model_name=args.model_name,
@@ -206,16 +143,10 @@ def build_config(args: argparse.Namespace, env: Mapping[str, str]) -> StreamConf
         audio_bitrate_kbps=args.audio_bitrate_kbps,
         max_retries=args.max_retries,
         track_wait_timeout=args.track_wait_timeout,
-        frame_timeout=args.frame_timeout,
+        reactor_message_diagnostics=reactor_message_diagnostics,
         reactor_api_key=reactor_api_key,
         youtube_rtmp_url=resolve_youtube_url(env),
         start_prompt=start_prompt,
         youtube_api_key=youtube_api_key,
         youtube_video_id=youtube_video_id,
-        livekit_url=livekit_url,
-        livekit_api_url=livekit_api_url,
-        livekit_api_key=livekit_api_key,
-        livekit_api_secret=livekit_api_secret,
-        livekit_room_name=livekit_room_name,
-        livekit_identity=livekit_identity,
     )
